@@ -88,7 +88,9 @@ uint64_t        tsc_at_boot = 0;
 #define Tera (kilo * Giga)
 #define Peta (kilo * Tera)
 
-#define CPU_FAMILY_PENTIUM_M    (0x6)
+static const char	FSB_Frequency_prop[] = "FSBFrequency";
+static const char   FSB_CPUFrequency_prop[] = "CPUFrequency";
+static const char	TSC_at_boot_prop[]   = "InitialTSC";
 
 /*
  * This routine extracts a frequency property in Hz from the device tree.
@@ -133,7 +135,7 @@ EFI_get_frequency(const char *prop)
 
 /*** for AMD CPU from AnV 10.9.2 ***/
 static uint64_t
-EFI_get_amd_requency(void)
+EFI_get_amd_frequency(void)
 {
     uint64_t    frequency = 0;
     DTEntry     entry;
@@ -141,24 +143,24 @@ EFI_get_amd_requency(void)
     unsigned int    size;
 
     if (DTLookupEntry(0, "/efi/platform", &entry) != kSuccess) {
-        kprintf("EFI_get_amd_requency: didn't find /efi/platform\n");
+        kprintf("EFI_get_amd_frequency: didn't find /efi/platform\n");
         return 0;
     }
     if (DTGetProperty(entry,FSB_CPUFrequency_prop,&value,&size) != kSuccess) {
-        kprintf("EFI_get_amd_requency: property %s not found\n",
+        kprintf("EFI_get_amd_frequency: property %s not found\n",
                 FSB_Frequency_prop);
         return 0;
     }
     if (size == sizeof(uint64_t)) {
         frequency = *(uint64_t *) value;
-        kprintf("EFI_get_amd_requency: read %s value: %llu\n",
+        kprintf("EFI_get_amd_frequency: read %s value: %llu\n",
                 FSB_Frequency_prop, frequency);
         if (!(10*Mega < frequency && frequency < 50*Giga)) {
             kprintf("EFI_Fake_MSR: value out of range\n");
             frequency = 0;
         }
     } else {
-        kprintf("EFI_get_amd_requency: unexpected size %d\n", size);
+        kprintf("EFI_get_amd_frequency: unexpected size %d\n", size);
     }
 
     return frequency;
@@ -284,8 +286,160 @@ tsc_init(void)
 			busFreq = EFI_get_frequency("FSBFrequency");
 		}
     } else {
-		switch (cpuid_info()->cpuid_family){
+        switch (cpuid_info()->cpuid_family){
         case 6:  /*** AMD Family 06h ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t divisor;
+            uint64_t did;
+            uint64_t fid;
+
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 8, 6);
+            fid = bitfield(cofvid, 5, 0);
+
+            if (did == 0) {
+            	divisor = 2;
+            } else if (did == 1) {
+            	divisor = 4;
+            } else if (did == 2) {
+            	divisor = 8;
+            } else if (did == 3) {
+            	divisor = 16;
+            } else if (did == 4) {
+            	divisor = 32;
+            }
+
+            cpuMult = ((fid + 16) * 10) / divisor;
+            cpuFreq = EFI_get_amd_frequency();
+            busFreq = (cpuFreq * 10) / cpuMult;
+            tscGranularity = cpuMult / 10;
+            break;
+
+		case 15: /*** AMD Family 0fh ***/
+			uint64_t fidvid = 0;
+			uint64_t cpuFreq = 0;
+			uint64_t cpuMult;
+			uint64_t fid;
+
+			fidvid = rdmsr64(AMD_FIDVID_STATUS);
+			fid = bitfield(fidvid, 5, 0);
+
+			//cpuMult = GetMultiplayer(fid);
+			cpuMult =((fid + 8 ) * 10) / 2;
+			cpuFreq = EFI_get_amd_frequency();
+			busFreq = (cpuFreq * 10) / cpuMult;
+			tscGranularity = cpuMult / 10;
+			break;
+
+		case 16: /*** AMD Family 10h ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t divisor;
+            uint64_t did;
+            uint64_t fid;
+
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 8, 6);
+            fid = bitfield(cofvid, 5, 0);
+
+            if (did == 0) {
+            	divisor = 2;
+            } else if (did == 1) {
+            	divisor = 4;
+            } else if (did == 2) {
+            	divisor = 8;
+            } else if (did == 3) {
+            	divisor = 16;
+            } else if (did == 4) {
+            	divisor = 32;
+            }
+
+            cpuMult = ((fid + 16) * 10) / divisor;
+            cpuFreq = EFI_get_amd_frequency();
+            busFreq = (cpuFreq * 10) / cpuMult;
+            tscGranularity = cpuMult / 10;
+            break;
+
+        case 17: /*** AMD Family 11h ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t divisor;
+            uint64_t did;
+            uint64_t fid;
+
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 8, 6);
+            fid = bitfield(cofvid, 5, 0);
+            if (did == 0) divisor = 2;
+            else if (did == 1) divisor = 4;
+            else if (did == 2) divisor = 8;
+            else if (did == 3) divisor = 16;
+            else if (did == 4) divisor = 32;
+
+            cpuMult = ((fid + 8) * 10) / divisor;
+            cpuFreq = EFI_get_amd_frequency();
+            busFreq = (cpuFreq * 10) / cpuMult;
+            tscGranularity = cpuMult / 10;
+            break;
+
+        case 18: /*** AMD Family 12h ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t divisor;
+            uint64_t did;
+            uint64_t fid;
+
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 3, 0);
+            fid = bitfield(cofvid, 8, 4);
+            if (did == 0) {
+                divisor = 10;
+            } else if (did == 1) {
+                divisor = 15;
+            } else if (did == 2) {
+                divisor = 20;
+            } else if (did == 3) {
+                divisor = 30;
+            } else if (did == 4) {
+                divisor = 40;
+            } else if (did == 5) {
+                divisor = 60;
+            } else if (did == 6) {
+                divisor = 80;
+            } else if (did == 7) {
+                divisor = 120;
+            } else if (did == 8) {
+                divisor = 160;
+            }
+
+            cpuMult = ((fid + 16) * 100)/ divisor;
+            cpuFreq = EFI_get_amd_frequency();
+            busFreq = (cpuFreq * 10) / cpuMult;
+            tscGranularity = cpuMult / 10;
+            break;
+
+        case 20: /*** AMD Family 14h ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t did;
+            uint64_t fid;
+
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 3, 0);
+            fid = bitfield(cofvid, 8, 4);
+
+            cpuMult = 3200 / ((fid*10) + ((did * 10) / 4) + 10);
+            cpuFreq = EFI_get_amd_frequency();
+            busFreq = (cpuFreq * 10) / cpuMult;
+            tscGranularity = cpuMult / 10;
+            break;
+
 		case 21: /*** AMD Family 15h Bulldozer ***/
             uint64_t cofvid = 0;
             uint64_t cpuFreq = 0;
@@ -311,10 +465,11 @@ tsc_init(void)
             }
 
             cpuMult = ((fid + 16) * 10) / divisor;
-            cpuFreq = EFI_get_amd_requency();
+            cpuFreq = EFI_get_amd_frequency();
             busFreq = (cpuFreq * 10) / cpuMult;
             tscGranularity = cpuMult / 10;
             break;
+
         case 22: /*** AMD Family 16h Jaguar ***/
             uint64_t cofvid = 0;
             uint64_t cpuFreq = 0;
@@ -340,7 +495,7 @@ tsc_init(void)
             }
 
             cpuMult = ((fid + 16) * 10) / divisor;
-            cpuFreq = EFI_get_amd_requency();
+            cpuFreq = EFI_get_amd_frequency();
 
             if (cofvid & (uint64_t)bit(0)) {
                 busFreq = (cpuFreq * 2)/((cpuMult*2)+1);
@@ -349,6 +504,7 @@ tsc_init(void)
             }
             tscGranularity = cpuMult;
             break;
+
 		case 23: /*** AMD Family 17h Zen ***/
             uint64_t CpuDfsId;
             uint64_t CpuFid;
@@ -362,7 +518,7 @@ tsc_init(void)
             CpuDfsId = bitfield(cofvid, 13, 8);
             CpuFid = bitfield(cofvid, 7, 0);
             cpuMult = (CpuFid * 10 / CpuDfsId) * 2;
-            busFreq = EFI_get_frequency("FSBFrequency");
+            busFreq = EFI_get_amd_frequency("FSBFrequency");
             tscFreq = busFreq * cpuMult / 10;
             tscGranularity = cpuMult;
 
@@ -417,7 +573,7 @@ tsc_init(void)
 		if (is_intel_cpu()) {
 			tscFreq = ((1 * Giga) << 32) / tscFCvtt2n;
 		} else if (is_amd_cpu()) {
-			tscFreq = EFI_get_amd_requency();
+			tscFreq = EFI_get_amd_frequency();
 		}
 		tscFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / tscFCvtt2n;
 

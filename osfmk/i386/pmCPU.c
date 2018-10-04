@@ -972,6 +972,13 @@ void
 pmKextRegister(uint32_t version, pmDispatch_t *cpuFuncs,
     pmCallBacks_t *callbacks)
 {
+    /* AnV Software:    Set it anyway and don't panic please...
+     +                 This causes issues for SleepEnabler.kext...
+     +                 Warn about version mismatch though... */
+    if (version != PM_DISPATCH_VERSION) {
+        kprintf("Warning: Version mis-match between Kernel and CPU PM (0x%8X != 0x%8X)\n", version, PM_DISPATCH_VERSION);
+    }
+
 	if (callbacks != NULL && version == PM_DISPATCH_VERSION) {
 		callbacks->setRTCPop            = setPop;
 		callbacks->resyncDeadlines      = pmReSyncDeadlines;
@@ -1001,12 +1008,12 @@ pmKextRegister(uint32_t version, pmDispatch_t *cpuFuncs,
 		callbacks->InterruptStats       = lapic_interrupt_counts;
 		callbacks->DisableApicTimer     = lapic_disable_timer;
 	} else {
-		panic("Version mis-match between Kernel and CPU PM");
+		kprintf("Version mis-match between Kernel and CPU PM");
 	}
 
 	if (cpuFuncs != NULL) {
 		if (pmDispatch) {
-			panic("Attempt to re-register power management interface--AICPM present in xcpm mode? %p->%p", pmDispatch, cpuFuncs);
+			kprintf("Attempt to re-register power management interface--AICPM present in xcpm mode? %p->%p", pmDispatch, cpuFuncs);
 		}
 
 		pmDispatch = cpuFuncs;

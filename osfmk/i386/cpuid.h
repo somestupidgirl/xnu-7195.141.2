@@ -242,6 +242,8 @@
 #define CPUID_MWAIT_EXTENSION   _Bit(0) /* enumeration of WMAIT extensions */
 #define CPUID_MWAIT_BREAK       _Bit(1) /* interrupts are break events	   */
 
+#define CPUID_MODEL_YONAH               0x0E
+#define CPUID_MODEL_MEROM               0x0F
 #define CPUID_MODEL_PENRYN              0x17
 #define CPUID_MODEL_NEHALEM             0x1A
 #define CPUID_MODEL_FIELDS              0x1E    /* Lynnfield, Clarksfield */
@@ -594,11 +596,26 @@ extern const char       *cpuid_vmm_family_string(void);
 extern boolean_t    is_amd_cpu(void);
 extern boolean_t    is_intel_cpu(void);
 
+extern void         fix_amd_tlb(void);
+
+extern uint32_t     extract_bitfield(uint32_t inField, uint32_t width, uint32_t offset);
+extern uint32_t     get_bitfield_width(uint32_t number);
+
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* ASSEMBLER */
+
+#define CPU_FAMILY_PENTIUM_M    (0x6)
+#define CPU_FAMILY_PENTIUM_4    (0xF)
+#define CPU_FAMILY_PENTIUM_4_M2 (0xF)
+#define CPU_FAMILY_AMD_PHENOM   (0x10)
+#define CPU_FAMILY_AMD_SHANGHAI (0x11)
+#define CPU_FAMILY_I5           (0x1E)
+#define CPU_FAMILY_I9           (0x2C)
+#define CPU_FAMILY_SANDY        (0x2A)
 
 #endif /* __APPLE_API_PRIVATE */
 #endif /* _MACHINE_CPUID_H_ */

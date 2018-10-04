@@ -91,6 +91,39 @@ is_intel_cpu(void)
     return FALSE;
 }
 
+uint32_t
+extract_bitfield(uint32_t infield, uint32_t width, uint32_t offset)
+{
+    uint32_t bitmask;
+    uint32_t outfield;
+
+    if ((offset+width) == 32) {
+        bitmask = (0xFFFFFFFF<<offset);
+    } else {
+        bitmask = (0xFFFFFFFF<<offset) ^ (0xFFFFFFFF<<(offset+width));
+    }
+
+    outField = (infield & bitmask) >> offset;
+    return outfield;
+}
+
+uint32_t
+get_bitfield_width(uint32_t number)
+{
+    uint32_t fieldwidth;
+
+    number--;
+    if (number == 0) {
+        return 0;
+    }
+
+    __asm__ volatile ( "bsr %%eax, %%ecx\n\t"
+                      : "=c" (fieldwidth)
+                      : "a"(number));
+
+    return fieldwidth+1;  /* bsr returns the position, we want the width */
+}
+
 /*
  * Leaf 2 cache descriptor encodings.
  */
@@ -375,7 +408,7 @@ cpuid_set_intel_cache_info( i386_cpu_info_t * info_p )
 	unsigned int    j;
 	boolean_t       cpuid_deterministic_supported = FALSE;
 
-	DBG("cpuid_set_cache_info(%p)\n", info_p);
+	DBG("cpuid_set_intel_cache_info(%p)\n", info_p);
 
 	bzero( linesizes, sizeof(linesizes));
 
@@ -1304,9 +1337,8 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
 	if (is_intel_cpu()) {
         wrmsr64(MSR_IA32_BIOS_SIGN_ID, 0);
         cpuid_fn(1, reg);
-        info_p->cpuid_microcode_version =
-        (uint32_t) (rdmsr64(MSR_IA32_BIOS_SIGN_ID) >> 32);
-    } else {
+        info_p->cpuid_microcode_version = (uint32_t) (rdmsr64(MSR_IA32_BIOS_SIGN_ID) >> 32);
+    } else if (is_amd_cpu()) {
         cpuid_fn(1, reg);
         info_p->cpuid_microcode_version = 186;
         init_amd_erratas(info_p);
@@ -1325,8 +1357,8 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
 	/* Get "processor flag"; necessary for microcode update matching */
 	if (is_intel_cpu()) {
         info_p->cpuid_processor_flag = (rdmsr64(MSR_IA32_PLATFORM_ID)>> 50) & 0x7;
-    } else {
-        info_p->cpuid_processor_flag = 1;
+    } else if (is_amd_cpu()) {
+        info_p->cpuid_processor_flag = 0;
     }
 
 	/* Fold extensions into family/model */
@@ -1481,7 +1513,7 @@ cpuid_set_generic_info(i386_cpu_info_t *info_p)
 		DBG("  EDX           : 0x%x\n", xsp->extended_state[edx]);
 	}
 
-	if (info_p->cpuid_model >= CPUID_MODEL_IVYBRIDGE) {
+	if (is_intel_cpu() && info_p->cpuid_model >= CPUID_MODEL_IVYBRIDGE) {
 		/*
 		 * Leaf7 Features:
 		 */
@@ -1533,6 +1565,9 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 	switch (info_p->cpuid_family) {
 	case 6:
 		switch (info_p->cpuid_model) {
+        case 15:
+            cpufamily = CPUFAMILY_INTEL_MEROM;
+            break;
 		case 23:
 			cpufamily = CPUFAMILY_INTEL_PENRYN;
 			break;
@@ -1585,7 +1620,35 @@ cpuid_set_cpufamily(i386_cpu_info_t *info_p)
 
 	info_p->cpuid_cpufamily = cpufamily;
 	DBG("cpuid_set_cpufamily(%p) returning 0x%x\n", info_p, cpufamily);
+
+    /* AnV - Fix AMD CPU Family to Intel Penryn
+     * This is needed to boot because the dyld assumes that an UNKNOWN
+     * Platform is HASWELL-capable, dropping an SSE4.2 'pcmpistri' on us during bcopies.
+     */
+    if (is_amd_cpu()) {
+        cpufamily = CPUFAMILY_INTEL_PENRYN;
+        info_p->cpuid_cpufamily = cpufamily;
+    }
+
 	return cpufamily;
+}
+
+/* AnV: AMD TLB Fix */
+void
+fix_amd_tlb(void)
+{
+    uint64_t value = 0;
+
+    // re-enable TLB caching if BIOS disabled it
+    // MSR_K8_HWCR mod
+    value = rdmsr64(0xC0010015);
+    value &= ~(1UL << 3);
+    wrmsr64(0xC0010015, value);
+
+    // MSR_C0011023 mod
+    value = rdmsr64(0xC0011023);
+    value &= ~(1UL << 1);
+    wrmsr64(0xC0011023, value);
 }
 
 /*
@@ -1656,11 +1719,11 @@ cpuid_set_info(void)
 		    PE_parse_boot_argn("-nomsr35h", NULL, 0)) {
 			info_p->core_count = 1;
 			info_p->thread_count = 1;
-			cpuid_set_cache_info(info_p);
+			cpuid_set_intel_cache_info(info_p);
 		} else {
 			switch (info_p->cpuid_cpufamily) {
 			case CPUFAMILY_INTEL_PENRYN:
-				cpuid_set_cache_info(info_p);
+				cpuid_set_intel_cache_info(info_p);
 				info_p->core_count   = info_p->cpuid_cores_per_package;
 				info_p->thread_count = info_p->cpuid_logical_per_package;
 				break;
@@ -1677,7 +1740,7 @@ cpuid_set_info(void)
 				}
 				info_p->core_count   = bitfield32((uint32_t)msr, 19, 16);
 				info_p->thread_count = bitfield32((uint32_t)msr, 15, 0);
-				cpuid_set_cache_info(info_p);
+				cpuid_set_intel_cache_info(info_p);
 				break;
 			default:
 				uint64_t msr = rdmsr64(MSR_CORE_THREAD_COUNT);
@@ -1687,7 +1750,7 @@ cpuid_set_info(void)
 				}
 				info_p->core_count   = bitfield32((uint32_t)msr, 31, 16);
 				info_p->thread_count = bitfield32((uint32_t)msr, 15, 0);
-				cpuid_set_cache_info(info_p);
+				cpuid_set_intel_cache_info(info_p);
 				break;
 			}
 		}
@@ -1899,25 +1962,94 @@ cpuid_info(void)
 char *
 cpuid_get_feature_names(uint64_t features, char *buf, unsigned buf_len)
 {
-	return cpuid_get_names(feature_map, features, buf, buf_len);
+    size_t en = 0;
+    char  *p = buf;
+    int i;
+
+    for (i = 0; feature_map[i].mask != 0; i++) {
+        if ((features & feature_map[i].mask) == 0)
+            continue;
+        if (len && ((size_t)(p - buf) < (buf_len - 1)))
+            *p++ = ' ';
+
+        len = min(strlen(feature_map[i].name), (size_t) ((buf_len-1) - (p-buf)));
+        if (len == 0)
+            break;
+        bcopy(feature_map[i].name, p, len);
+        p += len;
+    }
+    *p = '\0';
+
+    return buf;
 }
 
 char *
 cpuid_get_extfeature_names(uint64_t extfeatures, char *buf, unsigned buf_len)
 {
-	return cpuid_get_names(extfeature_map, extfeatures, buf, buf_len);
+    size_t len = 0;
+    char *p = buf;
+    int i;
+
+    for (i = 0; extfeature_map[i].mask != 0; i++) {
+        if ((extfeatures & extfeature_map[i].mask) == 0)
+            continue;
+        if (len && ((size_t) (p - buf) < (buf_len - 1)))
+            *p++ = ' ';
+        len = min(strlen(extfeature_map[i].name), (size_t) ((buf_len-1)-(p-buf)));
+        if (len == 0)
+            break;
+        bcopy(extfeature_map[i].name, p, len);
+        p += len;
+    }
+    *p = '\0';
+
+    return buf;
 }
 
 char *
 cpuid_get_leaf7_feature_names(uint64_t features, char *buf, unsigned buf_len)
 {
-	return cpuid_get_names(leaf7_feature_map, features, buf, buf_len);
+	size_t len = 0;
+    char *p = buf;
+    int i;
+
+    for (i = 0; leaf7_feature_map[i].mask != 0; i++) {
+        if ((extfeatures & leaf7_feature_map[i].mask) == 0)
+            continue;
+        if (len && ((size_t) (p - buf) < (buf_len - 1)))
+            *p++ = ' ';
+        len = min(strlen(leaf7_feature_map[i].name), (size_t) ((buf_len-1)-(p-buf)));
+        if (len == 0)
+            break;
+        bcopy(leaf7_feature_map[i].name, p, len);
+        p += len;
+    }
+    *p = '\0';
+
+    return buf;
 }
 
 char *
 cpuid_get_leaf7_extfeature_names(uint64_t features, char *buf, unsigned buf_len)
 {
-	return cpuid_get_names(leaf7_extfeature_map, features, buf, buf_len);
+	size_t len = 0;
+    char *p = buf;
+    int i;
+
+    for (i = 0; leaf7_extfeature_map[i].mask != 0; i++) {
+        if ((extfeatures & leaf7_extfeature_map[i].mask) == 0)
+            continue;
+        if (len && ((size_t) (p - buf) < (buf_len - 1)))
+            *p++ = ' ';
+        len = min(strlen(leaf7_extfeature_map[i].name), (size_t) ((buf_len-1)-(p-buf)));
+        if (len == 0)
+            break;
+        bcopy(leaf7_extfeature_map[i].name, p, len);
+        p += len;
+    }
+    *p = '\0';
+
+    return buf;
 }
 
 void
