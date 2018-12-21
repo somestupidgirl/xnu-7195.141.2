@@ -37,6 +37,7 @@
 #include <i386/cpu_data.h>
 #include <i386/lapic.h>
 #include <i386/machine_routines.h>
+#include <i386/cpuid.h>
 #include <stddef.h>
 
 __private_extern__ void qsort(
@@ -150,7 +151,10 @@ cpu_topology_sort(int ncpus)
 		x86_set_logical_topology(&cpup->lcpu, cpup->cpu_phys_number, i);
 	}
 
-	cpu_shadow_sort(ncpus);
+	if (is_intel_cpu()) {
+		cpu_shadow_sort(ncpus);
+	}
+
 	x86_validate_topology();
 
 	ml_set_interrupts_enabled(istate);
