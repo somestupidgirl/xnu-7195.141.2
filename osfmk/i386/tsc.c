@@ -131,6 +131,39 @@ EFI_get_frequency(const char *prop)
 	return frequency;
 }
 
+/*** for AMD CPU from AnV 10.9.2 ***/
+static uint64_t
+EFI_get_amd_requency(void)
+{
+    uint64_t    frequency = 0;
+    DTEntry     entry;
+    void        *value;
+    unsigned int    size;
+
+    if (DTLookupEntry(0, "/efi/platform", &entry) != kSuccess) {
+        kprintf("EFI_get_amd_requency: didn't find /efi/platform\n");
+        return 0;
+    }
+    if (DTGetProperty(entry,FSB_CPUFrequency_prop,&value,&size) != kSuccess) {
+        kprintf("EFI_get_amd_requency: property %s not found\n",
+                FSB_Frequency_prop);
+        return 0;
+    }
+    if (size == sizeof(uint64_t)) {
+        frequency = *(uint64_t *) value;
+        kprintf("EFI_get_amd_requency: read %s value: %llu\n",
+                FSB_Frequency_prop, frequency);
+        if (!(10*Mega < frequency && frequency < 50*Giga)) {
+            kprintf("EFI_Fake_MSR: value out of range\n");
+            frequency = 0;
+        }
+    } else {
+        kprintf("EFI_get_amd_requency: unexpected size %d\n", size);
+    }
+
+    return frequency;
+}
+
 /*
  * Initialize the various conversion factors needed by code referencing
  * the TSC.
@@ -164,100 +197,193 @@ tsc_init(void)
 		}
 	}
 
-	switch (cpuid_cpufamily()) {
-	case CPUFAMILY_INTEL_KABYLAKE:
-	case CPUFAMILY_INTEL_ICELAKE:
-	case CPUFAMILY_INTEL_SKYLAKE: {
-		/*
-		 * SkyLake and later has an Always Running Timer (ART) providing
-		 * the reference frequency. CPUID leaf 0x15 determines the
-		 * rationship between this and the TSC frequency expressed as
-		 *   -	multiplier (numerator, N), and
-		 *   -	divisor (denominator, M).
-		 * So that TSC = ART * N / M.
-		 */
-		i386_cpu_info_t *infop = cpuid_info();
-		cpuid_tsc_leaf_t *tsc_leafp = &infop->cpuid_tsc_leaf;
-		uint64_t         N = (uint64_t) tsc_leafp->numerator;
-		uint64_t         M = (uint64_t) tsc_leafp->denominator;
-		uint64_t         refFreq;
-
-		refFreq = EFI_get_frequency("ARTFrequency");
-		if (refFreq == 0) {
+    if (IsIntelCPU()){
+	    switch (cpuid_cpufamily()) {
+		case CPUFAMILY_INTEL_KABYLAKE:
+		case CPUFAMILY_INTEL_ICELAKE:
+		case CPUFAMILY_INTEL_SKYLAKE:
 			/*
-			 * Intel Scalable Processor (Xeon-SP) CPUs use a different
-			 * ART frequency.  Use that default here if EFI didn't
-			 * specify the frequency.  Since Xeon-SP uses the same
-			 * DisplayModel / DisplayFamily as Xeon-W, we need to
-			 * use the platform ID (or, as XNU calls it, the "processor
-			 * flag") to differentiate the two.
+			 * SkyLake and later has an Always Running Timer (ART) providing
+			 * the reference frequency. CPUID leaf 0x15 determines the
+			 * rationship between this and the TSC frequency expressed as
+			 *   -	multiplier (numerator, N), and
+			 *   -	divisor (denominator, M).
+			 * So that TSC = ART * N / M.
 			 */
-			if (cpuid_family() == 0x06 &&
-			    infop->cpuid_model == CPUID_MODEL_SKYLAKE_W &&
-			    is_xeon_sp(infop->cpuid_processor_flag)) {
-				refFreq = BASE_ART_CLOCK_SOURCE_SP;
-			} else {
-				refFreq = BASE_ART_CLOCK_SOURCE;
+			i386_cpu_info_t *infop = cpuid_info();
+			cpuid_tsc_leaf_t *tsc_leafp = &infop->cpuid_tsc_leaf;
+			uint64_t         N = (uint64_t) tsc_leafp->numerator;
+			uint64_t         M = (uint64_t) tsc_leafp->denominator;
+			uint64_t         refFreq;
+
+			refFreq = EFI_get_frequency("ARTFrequency");
+			if (refFreq == 0) {
+				/*
+				 * Intel Scalable Processor (Xeon-SP) CPUs use a different
+				 * ART frequency.  Use that default here if EFI didn't
+				 * specify the frequency.  Since Xeon-SP uses the same
+				 * DisplayModel / DisplayFamily as Xeon-W, we need to
+				 * use the platform ID (or, as XNU calls it, the "processor
+				 * flag") to differentiate the two.
+				 */
+				if (cpuid_family() == 0x06 &&
+				    infop->cpuid_model == CPUID_MODEL_SKYLAKE_W &&
+				    is_xeon_sp(infop->cpuid_processor_flag)) {
+					refFreq = BASE_ART_CLOCK_SOURCE_SP;
+				} else {
+					refFreq = BASE_ART_CLOCK_SOURCE;
+				}
 			}
-		}
 
-		assert(N != 0);
-		assert(M != 1);
-		tscFreq = refFreq * N / M;
-		busFreq = tscFreq;              /* bus is APIC frequency */
+			assert(N != 0);
+			assert(M != 1);
+			tscFreq = refFreq * N / M;
+			busFreq = tscFreq;              /* bus is APIC frequency */
 
-		kprintf(" ART: Frequency = %6d.%06dMHz, N/M = %lld/%llu\n",
-		    (uint32_t)(refFreq / Mega),
-		    (uint32_t)(refFreq % Mega),
-		    N, M);
+			kprintf(" ART: Frequency = %6d.%06dMHz, N/M = %lld/%llu\n",
+			    (uint32_t)(refFreq / Mega),
+			    (uint32_t)(refFreq % Mega),
+			    N, M);
 
-		break;
-	}
-	default: {
-		uint64_t msr_flex_ratio;
-		uint64_t msr_platform_info;
+			break;
+		default:
+			uint64_t msr_flex_ratio;
+			uint64_t msr_platform_info;
 
-		/* See if FLEX_RATIO is being used */
-		msr_flex_ratio = rdmsr64(MSR_FLEX_RATIO);
-		msr_platform_info = rdmsr64(MSR_PLATFORM_INFO);
-		flex_ratio_min = (uint32_t)bitfield(msr_platform_info, 47, 40);
-		flex_ratio_max = (uint32_t)bitfield(msr_platform_info, 15, 8);
-		/* No BIOS-programed flex ratio. Use hardware max as default */
-		tscGranularity = flex_ratio_max;
-		if (msr_flex_ratio & bit(16)) {
-			/* Flex Enabled: Use this MSR if less than max */
-			flex_ratio = (uint32_t)bitfield(msr_flex_ratio, 15, 8);
-			if (flex_ratio < flex_ratio_max) {
-				tscGranularity = flex_ratio;
+			/* See if FLEX_RATIO is being used */
+			msr_flex_ratio = rdmsr64(MSR_FLEX_RATIO);
+			msr_platform_info = rdmsr64(MSR_PLATFORM_INFO);
+			flex_ratio_min = (uint32_t)bitfield(msr_platform_info, 47, 40);
+			flex_ratio_max = (uint32_t)bitfield(msr_platform_info, 15, 8);
+			/* No BIOS-programed flex ratio. Use hardware max as default */
+			tscGranularity = flex_ratio_max;
+			if (msr_flex_ratio & bit(16)) {
+				/* Flex Enabled: Use this MSR if less than max */
+				flex_ratio = (uint32_t)bitfield(msr_flex_ratio, 15, 8);
+				if (flex_ratio < flex_ratio_max) {
+					tscGranularity = flex_ratio;
+				}
 			}
+
+			busFreq = EFI_get_frequency("FSBFrequency");
+			/* If EFI isn't configured correctly, use a constant
+			 * value. See 6036811.
+			 */
+			if (busFreq == 0) {
+				busFreq = BASE_NHM_CLOCK_SOURCE;
+			}
+
+			break;
+		case CPUFAMILY_INTEL_PENRYN:
+			uint64_t        prfsts;
+
+			prfsts = rdmsr64(IA32_PERF_STS);
+			tscGranularity = (uint32_t)bitfield(prfsts, 44, 40);
+			N_by_2_bus_ratio = (prfsts & bit(46)) != 0;
+
+			busFreq = EFI_get_frequency("FSBFrequency");
 		}
+    } else {
+		switch (cpuid_info()->cpuid_family){
+        case 6:  /*** AMD Family 06h ***/
+		case 21: /*** AMD Family 15h Bulldozer ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t divisor;
+            uint64_t did;
+            uint64_t fid;
 
-		busFreq = EFI_get_frequency("FSBFrequency");
-		/* If EFI isn't configured correctly, use a constant
-		 * value. See 6036811.
-		 */
-		if (busFreq == 0) {
-			busFreq = BASE_NHM_CLOCK_SOURCE;
-		}
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 8, 6);
+            fid = bitfield(cofvid, 5, 0);
 
-		break;
-	}
-	case CPUFAMILY_INTEL_PENRYN: {
-		uint64_t        prfsts;
+            if (did == 0) {
+            	divisor = 2;
+            } else if (did == 1) {
+            	divisor = 4;
+            } else if (did == 2) {
+            	divisor = 8;
+            } else if (did == 3) {
+            	divisor = 16;
+            } else if (did == 4) {
+            	divisor = 32;
+            }
 
-		prfsts = rdmsr64(IA32_PERF_STS);
-		tscGranularity = (uint32_t)bitfield(prfsts, 44, 40);
-		N_by_2_bus_ratio = (prfsts & bit(46)) != 0;
+            cpuMult = ((fid + 16) * 10) / divisor;
+            cpuFreq = EFI_get_amd_requency();
+            busFreq = (cpuFreq * 10) / cpuMult;
+            tscGranularity = cpuMult / 10;
+            break;
+        case 22: /*** AMD Family 16h Jaguar ***/
+            uint64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t cpuMult;
+            uint64_t divisor;
+            uint64_t did;
+            uint64_t fid;
 
-		busFreq = EFI_get_frequency("FSBFrequency");
-	}
-	}
+            cofvid  = rdmsr64(AMD_COFVID_STATUS);
+            did = bitfield(cofvid, 8, 6);
+            fid = bitfield(cofvid, 5, 0);
+
+            if (did == 0) {
+            	divisor = 1;
+            } else if (did == 1) {
+            	divisor = 2;
+            } else if (did == 2) {
+            	divisor = 4;
+            } else if (did == 3) {
+            	divisor = 8;
+            } else if (did == 4) {
+            	divisor = 16;
+            }
+
+            cpuMult = ((fid + 16) * 10) / divisor;
+            cpuFreq = EFI_get_amd_requency();
+
+            if (cofvid & (uint64_t)bit(0)) {
+                busFreq = (cpuFreq * 2)/((cpuMult*2)+1);
+            } else {
+                busFreq = cpuFreq / cpuMult;
+            }
+            tscGranularity = cpuMult;
+            break;
+		case 23: /*** AMD Family 17h Zen ***/
+            uint64_t CpuDfsId;
+            uint64_t CpuFid;
+            uint64_t cpuMult;
+            int64_t cofvid = 0;
+            uint64_t cpuFreq = 0;
+            uint64_t divisor;
+
+            cofvid = rdmsr64(AMD_PSTATE0_STS);
+
+            CpuDfsId = bitfield(cofvid, 13, 8);
+            CpuFid = bitfield(cofvid, 7, 0);
+            cpuMult = (CpuFid * 10 / CpuDfsId) * 2;
+            busFreq = EFI_get_frequency("FSBFrequency");
+            tscFreq = busFreq * cpuMult / 10;
+            tscGranularity = cpuMult;
+
+            if (busFreq == 0) {
+                busFreq = 1000000000ULL;
+            }
+
+            break;
+        }
+    }
 
 	if (busFreq != 0) {
 		busFCvtt2n = ((1 * Giga) << 32) / busFreq;
 		busFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / busFCvtt2n;
 	} else {
-		panic("tsc_init: EFI not supported!\n");
+		if (is_amd_cpu == TRUE) {
+			busFreq = 200*Mega;
+			kprintf("rtclock_init: Setting fsb to %u MHz\n", (uint32_t) (busFreq/Mega));
+		} else {
+			panic("tsc_init: EFI not supported!\n");
+		}
 	}
 
 	kprintf(" BUS: Frequency = %6d.%06dMHz, "
@@ -288,7 +414,11 @@ tsc_init(void)
 			tscFCvtt2n = busFCvtt2n / tscGranularity;
 		}
 
-		tscFreq = ((1 * Giga) << 32) / tscFCvtt2n;
+		if (is_intel_cpu()) {
+			tscFreq = ((1 * Giga) << 32) / tscFCvtt2n;
+		} else if (is_amd_cpu()) {
+			tscFreq = EFI_get_amd_requency();
+		}
 		tscFCvtn2t = 0xFFFFFFFFFFFFFFFFULL / tscFCvtt2n;
 
 		/*

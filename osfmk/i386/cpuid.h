@@ -591,6 +591,9 @@ extern void cpuid_do_was(void);
 extern const char       *cpuid_vmm_family_string(void);
 #endif
 
+extern boolean_t    is_amd_cpu(void);
+extern boolean_t    is_intel_cpu(void);
+
 #ifdef __cplusplus
 }
 #endif
