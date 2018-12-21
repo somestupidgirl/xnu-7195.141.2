@@ -150,8 +150,16 @@ endif
 # NOTE: order matters here.  -Wno-xxx goes before opt-in of ones we want
 WARNFLAGS_STD := \
 	-Weverything \
-	-Wno-pedantic \
-	$(WERROR) \
+	-Wextra \
+	-Wpointer-arith \
+	-Wreturn-type \
+	-Wcast-qual \
+	-Wwrite-strings \
+	-Wswitch \
+	-Wcast-align \
+	-Wchar-subscripts \
+	-Wredundant-decls \
+	-Wextra-tokens \
 	-Wno-bad-function-cast \
 	-Wno-c++-compat \
 	-Wno-c++98-compat \
@@ -167,6 +175,7 @@ WARNFLAGS_STD := \
 	-Wno-packed \
 	-Wno-padded \
 	-Wno-partial-availability \
+	-Wno-pedantic \
 	-Wno-reserved-id-macro \
 	-Wno-shift-sign-overflow \
 	-Wno-switch-enum \
@@ -193,7 +202,12 @@ WARNFLAGS_STD := $(WARNFLAGS_STD) \
 	-Wno-sign-conversion
 
 CWARNFLAGS_STD = \
-	$(WARNFLAGS_STD)
+	$(WARNFLAGS_STD) \
+	-Wstrict-prototypes \
+	-Wmissing-prototypes \
+	-Wshadow \
+	-Winline \
+	-Wnested-externs
 
 
 
@@ -214,6 +228,9 @@ CXXWARNFLAGS_STD = \
 	-Wno-exit-time-destructors \
 	-Wno-global-constructors \
 	-Wno-old-style-cast
+
+# overloaded-virtual warnings are non-fatal (9000888)
+CXXWARNFLAGS_STD += -Wno-error=overloaded-virtual
 
 # Can be overridden in Makefile.template or Makefile.$arch
 export CXXWARNFLAGS ?= $(CXXWARNFLAGS_STD)
@@ -852,7 +869,7 @@ ifeq ($(USE_LTO),1)
 CFLAGS_GEN	+= -flto
 CXXFLAGS_GEN	+= -flto
 LDFLAGS_KERNEL_LTO	= -Wl,-mllvm,-inline-threshold=100
-LDFLAGS_KERNEL_GEN	+= $(LDFLAGS_KERNEL_LTO) -Wl,-object_path_lto,$(TARGET)/lto.o
+LDFLAGS_KERNEL_GEN	+= $(LDFLAGS_KERNEL_LTO) -Wl,-object_path_lto,$(TARGET)/lto.o # -Wl,-mllvm -Wl,-disable-fp-elim
 LDFLAGS_NOSTRIP_FLAG = -rdynamic
 LDFLAGS_KERNEL_STRIP_LTO = -Wl,-dead_strip,-no_dead_strip_inits_and_terms
 
