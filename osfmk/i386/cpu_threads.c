@@ -1085,7 +1085,7 @@ x86_validate_topology(void)
 			TOPO_DBG("\n");
 
 			if (nCores != topoParms.nLCoresPerDie) {
-				panic("Should have %d Cores, but only found %d for Die %d",
+				kprintf("Should have %d Cores, but only found %d for Die %d",
 				    topoParms.nLCoresPerDie, nCores, die->pdie_num);
 			}
 
@@ -1111,7 +1111,7 @@ x86_validate_topology(void)
 			TOPO_DBG("\n");
 
 			if (nCPUs != topoParms.nLThreadsPerDie) {
-				panic("Should have %d Threads, but only found %d for Die %d",
+				kprintf("Should have %d Threads, but only found %d for Die %d",
 				    topoParms.nLThreadsPerDie, nCPUs, die->pdie_num);
 			}
 
@@ -1120,7 +1120,7 @@ x86_validate_topology(void)
 		}
 
 		if (nDies != topoParms.nLDiesPerPackage) {
-			panic("Should have %d Dies, but only found %d for package %d",
+			kprintf("Should have %d Dies, but only found %d for package %d",
 			    topoParms.nLDiesPerPackage, nDies, pkg->lpkg_num);
 		}
 
@@ -1163,7 +1163,7 @@ x86_validate_topology(void)
 			TOPO_DBG("\n");
 
 			if (nCPUs != topoParms.nLThreadsPerCore) {
-				panic("Should have %d Threads, but only found %d for Core %d",
+				kprintf("Should have %d Threads, but only found %d for Core %d",
 				    topoParms.nLThreadsPerCore, nCPUs, core->pcore_num);
 			}
 			nCores += 1;
@@ -1171,7 +1171,7 @@ x86_validate_topology(void)
 		}
 
 		if (nCores != topoParms.nLCoresPerPackage) {
-			panic("Should have %d Cores, but only found %d for package %d",
+			kprintf("Should have %d Cores, but only found %d for package %d",
 			    topoParms.nLCoresPerPackage, nCores, pkg->lpkg_num);
 		}
 
@@ -1196,7 +1196,7 @@ x86_validate_topology(void)
 		}
 
 		if (nCPUs != topoParms.nLThreadsPerPackage) {
-			panic("Should have %d Threads, but only found %d for package %d",
+			kprintf("Should have %d Threads, but only found %d for package %d",
 			    topoParms.nLThreadsPerPackage, nCPUs, pkg->lpkg_num);
 		}
 
